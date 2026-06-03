@@ -4,3 +4,4 @@ __pycache__/
 .env
 autoops_checkpoints.db
 *.md
+!README.md
