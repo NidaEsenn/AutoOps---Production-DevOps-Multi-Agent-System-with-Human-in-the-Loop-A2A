@@ -3,8 +3,10 @@
 import json
 import os
 from datetime import UTC, datetime
+from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import StreamingResponse
 
 from autoops.a2a.models import A2ATask, AgentAuthentication, AgentCapabilities, AgentCard
 from autoops.agents.codereview_agent import _call_codereview_tool
@@ -62,6 +64,39 @@ async def submit_task(task: A2ATask, authorization: str | None = Header(default=
     return task.model_dump()
 
 
+@app.post("/tasks/stream")
+async def stream_task(task: A2ATask, authorization: str | None = Header(default=None)) -> StreamingResponse:
+    """Execute an A2A task and stream lifecycle events as SSE."""
+    _check_auth(authorization)
+
+    async def events() -> AsyncIterator[str]:
+        yield _sse_event("submitted", task.model_dump())
+
+        task.status = "working"
+        task.updated_at = datetime.now(UTC)
+        yield _sse_event("working", task.model_dump())
+
+        try:
+            tool_name, args = _map_task_to_tool(task)
+            raw_output = await _call_codereview_tool(tool_name, args)
+            task.output = _parse_tool_output(raw_output)
+            task.status = "completed"
+        except Exception as exc:
+            task.status = "failed"
+            task.error = str(exc)
+        finally:
+            task.updated_at = datetime.now(UTC)
+
+        yield _sse_event(task.status, task.model_dump())
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
+def _sse_event(event_type: str, payload: dict) -> str:
+    """Format a server-sent event."""
+    return f"event: {event_type}\ndata: {json.dumps(payload, default=str)}\n\n"
+
+
 def _map_task_to_tool(task: A2ATask) -> tuple[str, dict]:
     """Map A2A task types to Code Review MCP tools."""
     if task.type == "diff_summary":
@@ -80,4 +115,3 @@ def _parse_tool_output(raw_output: str) -> dict:
         return parsed if isinstance(parsed, dict) else {"result": parsed}
     except json.JSONDecodeError:
         return {"result": raw_output}
-

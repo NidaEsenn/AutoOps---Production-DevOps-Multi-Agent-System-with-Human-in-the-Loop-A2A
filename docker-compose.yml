@@ -1,0 +1,89 @@
+services:
+  github-mcp:
+    build: .
+    command: python3 autoops/mcp/mcp_github.py
+    environment:
+      MCP_TRANSPORT: sse
+      GITHUB_MCP_PORT: 8001
+      GITHUB_REPO: ${GITHUB_REPO:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    ports:
+      - "8001:8001"
+
+  cloudwatch-mcp:
+    build: .
+    command: python3 autoops/mcp/mcp_cloudwatch.py
+    environment:
+      MCP_TRANSPORT: sse
+      CLOUDWATCH_MCP_PORT: 8002
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      DEPLOYMENT_LOG_GROUP: ${DEPLOYMENT_LOG_GROUP:-/aws/autoops/deployments}
+    ports:
+      - "8002:8002"
+
+  codereview-mcp:
+    build: .
+    command: python3 autoops/mcp/mcp_codereview.py
+    environment:
+      MCP_TRANSPORT: sse
+      CODEREVIEW_MCP_PORT: 8003
+    ports:
+      - "8003:8003"
+
+  monitoring-mcp:
+    build: .
+    command: python3 autoops/mcp/mcp_monitoring.py
+    environment:
+      MCP_TRANSPORT: sse
+      MONITORING_MCP_PORT: 8004
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      DEPLOYMENT_LOG_GROUP: ${DEPLOYMENT_LOG_GROUP:-/aws/autoops/deployments}
+      MONITORING_METRIC_NAMESPACE: ${MONITORING_METRIC_NAMESPACE:-AutoOps/Services}
+      MONITORING_SERVICE_DIMENSION: ${MONITORING_SERVICE_DIMENSION:-ServiceName}
+      MONITORING_ERROR_RATE_METRIC: ${MONITORING_ERROR_RATE_METRIC:-ErrorRate}
+      MONITORING_LATENCY_METRIC: ${MONITORING_LATENCY_METRIC:-Latency}
+      MONITORING_ERROR_RATE_THRESHOLD: ${MONITORING_ERROR_RATE_THRESHOLD:-1.0}
+      MONITORING_LATENCY_THRESHOLD_MS: ${MONITORING_LATENCY_THRESHOLD_MS:-500}
+    ports:
+      - "8004:8004"
+
+  codereview-a2a:
+    build: .
+    command: uvicorn autoops.a2a.server:app --host 0.0.0.0 --port 9003
+    environment:
+      CODEREVIEW_A2A_URL: http://codereview-a2a:9003
+      A2A_BEARER_TOKEN: ${A2A_BEARER_TOKEN:-}
+    ports:
+      - "9003:9003"
+
+  api:
+    build: .
+    command: uvicorn autoops.api:app --host 0.0.0.0 --port 8000
+    depends_on:
+      - github-mcp
+      - cloudwatch-mcp
+      - codereview-mcp
+      - monitoring-mcp
+      - codereview-a2a
+    environment:
+      MCP_TRANSPORT: sse
+      GITHUB_MCP_URL: http://github-mcp:8001/sse
+      CLOUDWATCH_MCP_URL: http://cloudwatch-mcp:8002/sse
+      CODEREVIEW_MCP_URL: http://codereview-mcp:8003/sse
+      MONITORING_MCP_URL: http://monitoring-mcp:8004/sse
+      CODEREVIEW_A2A_URL: http://codereview-a2a:9003
+      A2A_BEARER_TOKEN: ${A2A_BEARER_TOKEN:-}
+      GITHUB_REPO: ${GITHUB_REPO:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      CHECKPOINT_DB_PATH: /tmp/autoops_checkpoints.db
+    ports:
+      - "8000:8000"

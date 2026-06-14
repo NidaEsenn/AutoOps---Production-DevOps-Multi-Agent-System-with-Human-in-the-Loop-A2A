@@ -1,0 +1,20 @@
+# AgentCore Runtime image for AutoOps.
+# Mirrors what `agentcore deploy` builds: an ARM64 container that serves the
+# entrypoint on :8080 (POST /invocations + GET /ping). Building this locally is
+# the definitive pre-deploy check — if it builds and serves, the cloud deploy
+# has everything it needs.
+FROM --platform=linux/arm64 python:3.13-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY requirements.txt pyproject.toml ./
+RUN python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip install --no-cache-dir -r requirements.txt
+
+COPY autoops ./autoops
+
+EXPOSE 8080
+CMD ["python", "-m", "autoops.agentcore_app"]

@@ -5,6 +5,8 @@ from typing import Any
 
 import httpx
 
+from autoops.observability import tool_span
+
 
 class A2AClient:
     """Small async HTTP client for the AutoOps A2A protocol."""
@@ -25,27 +27,51 @@ class A2AClient:
         headers = self._headers()
         payload = {"type": task_type, "input": input}
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{base_url.rstrip('/')}/tasks",
-                json=payload,
-                headers=headers,
-            )
-            response.raise_for_status()
-            result: dict[str, Any] = response.json()
+        with tool_span("a2a.delegate", agent="a2a", target_agent=base_url, task_type=task_type):
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{base_url.rstrip('/')}/tasks",
+                    json=payload,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                result: dict[str, Any] = response.json()
 
         if result.get("status") == "failed":
             raise RuntimeError(result.get("error") or "A2A task failed")
         return result
 
     async def stream_delegate(self, base_url: str, task_type: str, input: dict) -> AsyncIterator[dict]:
-        """Yield a single completed task result.
+        """POST an A2A task and yield SSE lifecycle events."""
+        headers = self._headers()
+        payload = {"type": task_type, "input": input}
 
-        The PRD includes a streaming endpoint for future SSE support. The
-        current server is synchronous, so this method keeps the client API shape
-        while yielding the normal delegate result once.
-        """
-        yield await self.delegate(base_url, task_type, input)
+        with tool_span("a2a.stream_delegate", agent="a2a", target_agent=base_url, task_type=task_type):
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST",
+                    f"{base_url.rstrip('/')}/tasks/stream",
+                    json=payload,
+                    headers=headers,
+                ) as response:
+                    response.raise_for_status()
+                    event_type: str | None = None
+                    data_lines: list[str] = []
+
+                    async for line in response.aiter_lines():
+                        if line.startswith("event:"):
+                            event_type = line.removeprefix("event:").strip()
+                            continue
+                        if line.startswith("data:"):
+                            data_lines.append(line.removeprefix("data:").strip())
+                            continue
+                        if line == "" and data_lines:
+                            payload_data = json_loads("\n".join(data_lines))
+                            if event_type:
+                                payload_data["event"] = event_type
+                            yield payload_data
+                            event_type = None
+                            data_lines = []
 
     def _headers(self) -> dict[str, str]:
         """Return optional auth headers."""
@@ -53,3 +79,10 @@ class A2AClient:
             return {}
         return {"Authorization": f"Bearer {self.bearer_token}"}
 
+
+def json_loads(value: str) -> dict:
+    """Parse a JSON object for streamed A2A events."""
+    import json
+
+    parsed = json.loads(value)
+    return parsed if isinstance(parsed, dict) else {"result": parsed}

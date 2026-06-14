@@ -8,6 +8,7 @@ from langgraph.types import Command
 
 from autoops.state import AutoOpsState
 from autoops.supervisor import build_graph
+from autoops.observability import graph_config
 
 
 WRITE_NODES = ["github_write"]
@@ -16,7 +17,7 @@ DEFAULT_CHECKPOINT_DB_PATH = "autoops_checkpoints.db"
 
 def _graph_config(session_id: str) -> dict:
     """Build LangGraph config for checkpointed execution."""
-    return {"configurable": {"thread_id": session_id}}
+    return graph_config(session_id, run_name="autoops-hitl-run", agent_name="supervisor")
 
 
 def _print_approval(details: dict) -> None:

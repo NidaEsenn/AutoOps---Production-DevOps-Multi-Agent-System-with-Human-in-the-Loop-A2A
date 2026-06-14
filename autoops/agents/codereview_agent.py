@@ -1,13 +1,10 @@
 """Code Review agent node backed by the Code Review MCP server."""
 
 import json
-import os
 import re
 from pathlib import Path
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-
+from autoops.mcp_client import call_mcp_tool
 from autoops.state import AutoOpsState
 
 
@@ -36,23 +33,15 @@ def _extract_path(task: str) -> str | None:
 
 async def _call_codereview_tool(tool_name: str, args: dict | None = None) -> str:
     """Call a Code Review MCP tool over stdio and return text content."""
-    server_params = StdioServerParameters(
-        command="python3",
-        args=[str(CODEREVIEW_MCP_SERVER)],
-        env=os.environ.copy(),
-        cwd=PROJECT_ROOT,
+    return await call_mcp_tool(
+        server_path=CODEREVIEW_MCP_SERVER,
+        tool_name=tool_name,
+        args=args,
+        agent="codereview",
+        url_env_var="CODEREVIEW_MCP_URL",
+        default_sse_url="http://localhost:8003/sse",
+        project_root=PROJECT_ROOT,
     )
-
-    with open(os.devnull, "w", encoding="utf-8") as errlog:
-        async with stdio_client(server_params, errlog=errlog) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(tool_name, args or {})
-
-    text_parts = [content.text for content in result.content if content.type == "text"]
-    if text_parts:
-        return "\n".join(text_parts)
-    return json.dumps(result.model_dump(), indent=2)
 
 
 async def codereview_node(state: AutoOpsState) -> AutoOpsState:

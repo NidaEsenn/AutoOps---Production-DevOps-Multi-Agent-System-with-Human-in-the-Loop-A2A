@@ -116,6 +116,31 @@ async def get_repo_status() -> str:
 
 
 @mcp.tool()
+async def get_pr_diff(pr_number: int) -> str:
+    """Return the diff for a pull request.
+
+    This is a read-only operation and does not require human approval.
+    """
+    repo = os.getenv("GITHUB_REPO")
+    args = ["pr", "diff", str(pr_number)]
+
+    if repo:
+        args.extend(["--repo", repo])
+
+    try:
+        diff = _run_gh(args)
+        return json.dumps(
+            {
+                "pr_number": pr_number,
+                "diff": diff,
+            },
+            indent=2,
+        )
+    except Exception as exc:
+        return _error_response("get_pr_diff", exc)
+
+
+@mcp.tool()
 async def create_issue(title: str, body: str, labels: list[str] | None = None) -> str:
     """Create a GitHub issue in the current or configured repository.
 
@@ -136,6 +161,32 @@ async def create_issue(title: str, body: str, labels: list[str] | None = None) -
         return json.dumps({"issue_url": url}, indent=2)
     except Exception as exc:
         return _error_response("create_issue", exc)
+
+
+@mcp.tool()
+async def add_pr_comment(pr_number: int, comment: str) -> str:
+    """Add a comment to a pull request.
+
+    This is a write operation. AutoOps must request human approval before an
+    agent calls this tool.
+    """
+    repo = os.getenv("GITHUB_REPO")
+    args = ["pr", "comment", str(pr_number), "--body", comment]
+
+    if repo:
+        args.extend(["--repo", repo])
+
+    try:
+        output = _run_gh(args)
+        return json.dumps(
+            {
+                "pr_number": pr_number,
+                "comment_url": output,
+            },
+            indent=2,
+        )
+    except Exception as exc:
+        return _error_response("add_pr_comment", exc)
 
 
 if __name__ == "__main__":

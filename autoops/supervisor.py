@@ -1,14 +1,17 @@
 """Supervisor routing and LangGraph definition for AutoOps."""
 
+import os
 from dataclasses import dataclass
 from typing import Literal
 
 from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, Field
 
 from autoops.agents.cloudwatch_agent import cloudwatch_node
 from autoops.agents.codereview_agent import codereview_node
 from autoops.agents.github_agent import github_node, github_write_node
 from autoops.agents.monitoring_agent import monitoring_node
+from autoops.observability import graph_config
 from autoops.state import AutoOpsState
 
 
@@ -72,9 +75,70 @@ def decide_route(task: str) -> RoutingDecision:
     )
 
 
+class RoutingDecisionModel(BaseModel):
+    """Structured-output schema the LLM fills in for routing (PRD 4.2)."""
+
+    next_agent: Literal["github", "cloudwatch", "codereview", "monitoring", "end"]
+    reasoning: str = Field(description="One sentence explaining the routing choice.")
+    sub_task: str = Field(description="What this specific agent should accomplish.")
+
+
+ROUTING_SYSTEM_PROMPT = """You are the AutoOps supervisor for a DevOps multi-agent system.
+Classify the user's request and route it to exactly one specialist agent.
+
+Routing table:
+- github     : pull requests, issues, commits, branches, merges, repository/Git workflows.
+- cloudwatch : logs, alarms, metrics, error rate, latency, CloudWatch queries.
+- codereview : security scans, linting, vulnerabilities, SAST, static analysis.
+- monitoring : service health, uptime, deployment history, incident summaries, status.
+- end        : the request is ambiguous or not a DevOps task; ask the user to clarify.
+
+Rules:
+- Creating or filing a GitHub issue (even from an incident) routes to "github".
+- If the request does not clearly match a specialist, choose "end".
+- Always provide a one-sentence reasoning and a concrete sub_task for the chosen agent."""
+
+
+def _build_router_llm():
+    """Return a Groq chat model for routing, or None if not configured."""
+    api_key = os.getenv("GROQ_API_KEY", "")
+    if not api_key or api_key.startswith("REPLACE_WITH"):
+        return None
+    try:
+        from langchain_groq import ChatGroq
+    except ImportError:
+        return None
+    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    return ChatGroq(model=model, temperature=0)
+
+
+async def llm_route(task: str) -> RoutingDecision | None:
+    """Route via the LLM with structured output; None if unavailable or it fails."""
+    llm = _build_router_llm()
+    if llm is None:
+        return None
+    try:
+        structured = llm.with_structured_output(RoutingDecisionModel)
+        result = await structured.ainvoke(
+            [("system", ROUTING_SYSTEM_PROMPT), ("human", task)]
+        )
+        return RoutingDecision(
+            next_agent=result.next_agent,
+            reasoning=result.reasoning,
+            sub_task=result.sub_task or task,
+        )
+    except Exception:
+        # Any LLM/network/parse failure falls back to deterministic routing.
+        return None
+
+
 async def supervisor_node(state: AutoOpsState) -> AutoOpsState:
-    """Route the current task to the next specialist agent."""
-    decision = decide_route(state["current_task"])
+    """Route the current task to the next specialist agent.
+
+    Uses the LLM router when GROQ_API_KEY is configured, otherwise falls back to
+    deterministic keyword routing so the graph always works offline and in tests.
+    """
+    decision = await llm_route(state["current_task"]) or decide_route(state["current_task"])
     return {
         "active_agent": decision.next_agent,
         "current_task": decision.sub_task,
@@ -158,4 +222,4 @@ def build_graph(checkpointer=None, interrupt_before: list[str] | None = None):
 async def run_graph(state: AutoOpsState) -> AutoOpsState:
     """Run the compiled AutoOps graph."""
     graph = build_graph()
-    return await graph.ainvoke(state)
+    return await graph.ainvoke(state, config=graph_config(state["session_id"]))

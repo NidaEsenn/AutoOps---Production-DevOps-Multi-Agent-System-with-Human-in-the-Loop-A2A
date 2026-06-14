@@ -1,0 +1,28 @@
+agent_name: autoops-supervisor
+region: us-east-1
+runtime:
+  memory_mb: 2048
+  timeout_seconds: 300
+  architecture: arm64
+
+gateway:
+  mcp_servers:
+    - name: github-tools
+      arn: arn:aws:agentcore:us-east-1:ACCOUNT_ID:mcp-server/github-tools
+    - name: cloudwatch-tools
+      arn: arn:aws:agentcore:us-east-1:ACCOUNT_ID:mcp-server/cloudwatch-tools
+    - name: codereview-tools
+      arn: arn:aws:agentcore:us-east-1:ACCOUNT_ID:mcp-server/codereview-tools
+    - name: monitoring-tools
+      arn: arn:aws:agentcore:us-east-1:ACCOUNT_ID:mcp-server/monitoring-tools
+
+memory:
+  short_term: session
+  long_term:
+    enabled: true
+    vector_store: opensearch
+
+observability:
+  langsmith_project: autoops
+  xray_enabled: true
+  cloudwatch_log_group: /autoops/agents
